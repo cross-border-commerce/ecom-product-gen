@@ -1,12 +1,4 @@
-function apiBaseUrl() {
-  const raw = (process.env.IMAGE_API_BASE_URL || "https://api.openai.com").trim().replace(/\/+$/, "");
-  return raw.toLowerCase().endsWith("/v1") ? raw : `${raw}/v1`;
-}
-
-const apiKey = process.env.IMAGE_API_KEY || "";
-const model = process.env.IMAGE_MODEL || "gpt-image-2";
-const size = process.env.IMAGE_SIZE || "1024x1024";
-const quality = process.env.IMAGE_QUALITY || "auto";
+import { apiBaseUrl, apiKey, imageModel, imageQuality, imageSize } from "./config";
 
 export function hasApiKey() {
   return Boolean(apiKey);
@@ -39,12 +31,12 @@ export async function editProductImage(prompt: string, images: File[]) {
 
 async function requestEdit(prompt: string, images: File[]) {
   const form = new FormData();
-  form.set("model", model);
+  form.set("model", imageModel);
   form.set("prompt", prompt);
   form.set("n", "1");
-  form.set("size", size);
-  form.set("quality", quality);
-  if (!/gpt-image/.test(model)) {
+  form.set("size", imageSize);
+  form.set("quality", imageQuality);
+  if (!/gpt-image/.test(imageModel)) {
     form.set("response_format", "b64_json");
   }
   images.forEach((image, index) => {

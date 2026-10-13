@@ -1,6 +1,6 @@
 # 商品图工坊
 
-无限画布流程 1：每个 Logo/印花 与全部服装实拍组合，生成电商商品图。
+流水线：Logo + 服装 → 产品图 → 模特识场景 → 规划镜头 → 主图/副图。
 
 ## 启动
 
@@ -17,6 +17,8 @@ bun run dev
 
 ## 接口
 
-`POST /api/product`
-
-multipart 字段：`logo`、`garment`。返回 `{ ok, image }`，`image` 为 data URL。
+- `POST /api/product` 字段 `logo`、`garment`
+- `POST /api/scene` 字段 `model`
+- `POST /api/plan` JSON `{ scene }`
+- `POST /api/hero` 字段 `model`、`product`、`scene`
+- `POST /api/sub` 字段 `hero`、`scene`、`lens`、`action`、`prop`、`expression`
