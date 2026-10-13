@@ -22,16 +22,19 @@ type Job = {
   garment: LocalImage;
   product?: string;
   hero?: string;
+  scene?: string;
+  outfit?: string;
+  shots: Shot[];
   subs: Record<string, string>;
-  step: "idle" | "product" | "hero" | "sub" | "done" | "error";
+  step: "idle" | "product" | "style" | "plan" | "hero" | "sub" | "done" | "error";
   error?: string;
 };
 
-type Phase = "idle" | "product" | "scene" | "plan" | "generate" | "done";
+type Phase = "idle" | "product" | "style" | "plan" | "generate" | "done";
 
 const PHASES = [
   { id: "product", label: "产品图" },
-  { id: "scene", label: "识场景" },
+  { id: "style", label: "穿搭规划" },
   { id: "plan", label: "规划镜头" },
   { id: "generate", label: "调生图" },
 ] as const;
@@ -70,15 +73,21 @@ async function dataUrlToFile(dataUrl: string, name: string) {
   return new File([blob], name, { type: blob.type || "image/png" });
 }
 
+async function readJson(response: Response) {
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok === false) {
+    throw new Error(payload.error || payload.message || `请求失败 ${response.status}`);
+  }
+  return payload;
+}
+
 async function postJson(path: string, body: unknown) {
   const response = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const payload = await response.json();
-  if (!payload.ok) throw new Error(payload.error || "请求失败");
-  return payload;
+  return readJson(response);
 }
 
 async function postImage(path: string, body: FormData) {
@@ -133,8 +142,6 @@ export default function App() {
   const [model, setModel] = useState<LocalImage | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [phase, setPhase] = useState<Phase>("idle");
-  const [scene, setScene] = useState("");
-  const [shots, setShots] = useState<Shot[]>([]);
   const [zipping, setZipping] = useState(false);
   const [activeLogoId, setActiveLogoId] = useState<string>("");
   const running = phase !== "idle" && phase !== "done";
@@ -175,11 +182,11 @@ export default function App() {
 
   const start = async () => {
     if (!pairs.length || !model || running) return;
-    const nextJobs: Job[] = pairs.map(({ logo, garment }) => ({ logo, garment, subs: {}, step: "idle" }));
+    const nextJobs: Job[] = pairs.map(({ logo, garment }) => ({ logo, garment, shots: [], subs: {}, step: "idle" }));
     const products = new Map<string, string>();
+    const styles = new Map<string, { scene: string; outfit: string }>();
+    const plans = new Map<string, { scene: string; outfit: string; shots: Shot[] }>();
     setJobs(nextJobs);
-    setScene("");
-    setShots([]);
     try {
       setPhase("product");
       await runPool(nextJobs, 1, async (job) => {
@@ -192,28 +199,48 @@ export default function App() {
         setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { product, step: "idle" }));
       });
 
-      setPhase("scene");
-      const sceneBody = new FormData();
-      sceneBody.set("model", model.file);
-      const sceneRes = await fetch("/api/scene", { method: "POST", body: sceneBody }).then((res) => res.json());
-      if (!sceneRes.ok) throw new Error(sceneRes.error || "识场景失败");
-      const sceneText = sceneRes.scene as string;
-      setScene(sceneText);
+      setPhase("style");
+      await runPool(nextJobs, 1, async (job) => {
+        const key = `${job.logo.id}:${job.garment.id}`;
+        const product = products.get(key);
+        if (!product) throw new Error("缺少产品图");
+        setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { step: "style" }));
+        const styleBody = new FormData();
+        styleBody.set("model", model.file);
+        styleBody.set("product", await dataUrlToFile(product, "product.png"));
+        const styleRes = await readJson(await fetch("/api/style", { method: "POST", body: styleBody }));
+        if (!styleRes.scene || !styleRes.outfit) throw new Error("穿搭规划结果为空");
+        styles.set(key, { scene: styleRes.scene, outfit: styleRes.outfit });
+        setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, {
+          scene: styleRes.scene,
+          outfit: styleRes.outfit,
+          step: "plan",
+        }));
+      });
 
       setPhase("plan");
-      const planRes = await postJson("/api/plan", { scene: sceneText });
-      const planned = planRes.shots as Shot[];
-      setShots(planned);
+      await runPool(nextJobs, 1, async (job) => {
+        const key = `${job.logo.id}:${job.garment.id}`;
+        const style = styles.get(key);
+        if (!style?.scene || !style?.outfit) throw new Error("缺少穿搭规划");
+        const planRes = await postJson("/api/plan", { scene: style.scene, outfit: style.outfit });
+        plans.set(key, { ...style, shots: planRes.shots });
+        setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { shots: planRes.shots, step: "idle" }));
+      });
 
       setPhase("generate");
       await runPool(nextJobs, 1, async (job) => {
-        const product = products.get(`${job.logo.id}:${job.garment.id}`);
-        if (!product) throw new Error("缺少产品图");
+        const key = `${job.logo.id}:${job.garment.id}`;
+        const product = products.get(key);
+        const plan = plans.get(key);
+        if (!product || !plan) throw new Error("缺少产品图或规划");
+        const { scene: sceneText, outfit: outfitText, shots: planned } = plan;
         setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { step: "hero" }));
         const heroBody = new FormData();
         heroBody.set("model", model.file);
         heroBody.set("product", await dataUrlToFile(product, "product.png"));
         heroBody.set("scene", sceneText);
+        heroBody.set("outfit", outfitText);
         const hero = await postImage("/api/hero", heroBody);
         setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { hero, step: "sub" }));
 
@@ -223,6 +250,7 @@ export default function App() {
           const subBody = new FormData();
           subBody.set("hero", heroFile);
           subBody.set("scene", sceneText);
+          subBody.set("outfit", outfitText);
           subBody.set("lens", shot.lens);
           subBody.set("action", shot.action);
           subBody.set("prop", shot.prop);
@@ -248,7 +276,7 @@ export default function App() {
         : stem(job.garment.name);
       if (job.product) files[`${prefix}/商品图.png`] = await imageToBytes(job.product);
       if (job.hero) files[`${prefix}/主图.png`] = await imageToBytes(job.hero);
-      for (const shot of shots) {
+      for (const shot of job.shots) {
         if (job.subs[shot.id]) files[`${prefix}/${shot.name}.png`] = await imageToBytes(job.subs[shot.id]);
       }
     }
@@ -271,7 +299,7 @@ export default function App() {
   const logoStats = (logoId: string) => {
     const items = jobs.filter((job) => job.logo.id === logoId);
     const total = garments.length || 1;
-    const subTotal = total * (shots.length || 5);
+    const subTotal = items.reduce((sum, job) => sum + (job.shots.length || 5), 0) || total * 5;
     return {
       product: items.filter((job) => job.product).length,
       hero: items.filter((job) => job.hero).length,
@@ -288,7 +316,7 @@ export default function App() {
           <p className="text-xs tracking-[0.28em] text-[var(--mute)] uppercase">Ecom Product Studio</p>
           <h1 className="display mt-2 text-4xl font-medium tracking-tight">商品图工坊</h1>
           <p className="mt-3 max-w-2xl text-[var(--mute)]">
-            Logo + 服装 → 产品图 → 模特识场景 → 规划镜头 → 主图/副图
+            Logo + 服装 → 产品图 → 模特与商品图做穿搭规划 → 规划镜头动作表情 → 主图/副图
           </p>
         </div>
         <div className="flex gap-3">
@@ -326,20 +354,25 @@ export default function App() {
         <DropCard title="模特参考" hint="识场景和主图用" count={model ? 1 : 0} onAdd={addModel} items={model ? [model] : []} onRemove={() => setModel(null)} />
       </div>
 
-      {scene || shots.length ? (
-        <section className="mt-6 rounded-3xl border border-[var(--line)] bg-[var(--card)] p-5 text-sm">
-          {scene ? <p className="text-[var(--mute)]"><span className="font-medium text-[var(--ink)]">场景：</span>{scene}</p> : null}
-          {shots.length ? (
-            <ul className="mt-3 grid gap-2 md:grid-cols-2">
-              {shots.map((shot) => (
-                <li key={shot.id} className="rounded-xl bg-[#fff6ea] px-3 py-2">
-                  <span className="font-medium">{shot.name}</span> · {shot.lens} · {shot.action}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </section>
-      ) : null}
+      {activeLogo && garments.length ? (() => {
+        const detail = jobs.find((item) => item.logo.id === activeLogo.id && (item.outfit || item.shots.length));
+        if (!detail?.outfit && !detail?.shots.length) return null;
+        return (
+          <section className="mt-6 rounded-3xl border border-[var(--line)] bg-[var(--card)] p-5 text-sm">
+            {detail.outfit ? <p className="text-[var(--mute)]"><span className="font-medium text-[var(--ink)]">穿搭：</span>{detail.outfit}</p> : null}
+            {detail.scene ? <p className="mt-2 text-[var(--mute)]"><span className="font-medium text-[var(--ink)]">场景：</span>{detail.scene}</p> : null}
+            {detail.shots.length ? (
+              <ul className="mt-3 grid gap-2 md:grid-cols-2">
+                {detail.shots.map((shot) => (
+                  <li key={shot.id} className="rounded-xl bg-[#fff6ea] px-3 py-2">
+                    <span className="font-medium">{shot.name}</span> · {shot.lens} · {shot.action} · {shot.expression}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        );
+      })() : null}
 
       <section className="mt-8 overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--card)]">
         <div className="border-b border-[var(--line)] px-5 py-4">
@@ -387,7 +420,7 @@ export default function App() {
                             <img src={garment.url} alt="" className="h-10 w-10 rounded-lg object-cover" />
                             <div className="min-w-0 flex-1 truncate">{stem(garment.name)}</div>
                             <span className="text-xs text-[var(--mute)]">
-                              {job?.step === "product" ? "产品图生成中" : job?.step === "hero" ? "主图生成中" : job?.step === "sub" ? `副图 ${Object.keys(job.subs).length}/${shots.length || 5}` : job?.step === "done" ? "完成" : job?.step === "error" ? job.error : job?.product ? "待生主图" : "等待"}
+                              {job?.step === "product" ? "产品图生成中" : job?.step === "style" ? "穿搭规划中" : job?.step === "plan" ? "规划镜头中" : job?.step === "hero" ? "主图生成中" : job?.step === "sub" ? `副图 ${Object.keys(job.subs).length}/${job.shots.length || 5}` : job?.step === "done" ? "完成" : job?.step === "error" ? job.error : job?.product ? "待生主图" : "等待"}
                             </span>
                             {job?.product ? <img src={job.product} alt="" className="h-10 w-10 rounded object-cover" /> : null}
                             {job?.hero ? <img src={job.hero} alt="" className="h-10 w-10 rounded object-cover" /> : null}

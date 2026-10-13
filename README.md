@@ -1,6 +1,6 @@
 # 商品图工坊
 
-流水线：Logo + 服装 → 产品图 → 模特识场景 → 规划镜头 → 主图/副图。
+流水线：Logo + 服装 → 产品图 → 模特与商品图穿搭规划 → 规划镜头动作表情 → 主图/副图。
 
 ## 启动
 
@@ -18,7 +18,7 @@ bun run dev
 ## 接口
 
 - `POST /api/product` 字段 `logo`、`garment`
-- `POST /api/scene` 字段 `model`
-- `POST /api/plan` JSON `{ scene }`
-- `POST /api/hero` 字段 `model`、`product`、`scene`
-- `POST /api/sub` 字段 `hero`、`scene`、`lens`、`action`、`prop`、`expression`
+- `POST /api/style` 字段 `model`、`product`，返回场景和穿搭
+- `POST /api/plan` JSON `{ scene, outfit }`，返回副图镜头
+- `POST /api/hero` 字段 `model`、`product`、`scene`、`outfit`
+- `POST /api/sub` 字段 `hero`、`scene`、`outfit`、`lens`、`action`、`prop`、`expression`
