@@ -1,4 +1,6 @@
+import { join } from "node:path";
 import { Hono } from "hono";
+import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
 import { chatText, parseShots, parseStyle } from "./chat";
 import { imageModel } from "./config";
@@ -85,6 +87,10 @@ app.post("/api/sub", async (c) => {
   console.log("[sub] start", lens);
   return runEdit(c, subPrompt(scene, outfit, { lens, action, prop, expression }), [hero], "sub");
 });
+
+const webRoot = join(import.meta.dir, "../web/dist");
+app.use("/*", serveStatic({ root: webRoot }));
+app.get("*", serveStatic({ path: join(webRoot, "index.html") }));
 
 async function runEdit(c: { json: (data: unknown, status?: number) => Response }, prompt: string, images: File[], label = "edit") {
   try {

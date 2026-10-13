@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { apiBaseUrl, apiKey, imageModel, imageQuality, imageSize } from "./config";
 
 export function hasApiKey() {
@@ -9,17 +10,31 @@ function isDropped(error: unknown) {
   return /socket connection was closed|ECONNRESET|UND_ERR_SOCKET|fetch failed/i.test(text);
 }
 
+async function toEditFile(file: File, name: string) {
+  const input = Buffer.from(await file.arrayBuffer());
+  const out = await sharp(input)
+    .rotate()
+    .resize(1536, 1536, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+  return new File([out], name, { type: "image/jpeg" });
+}
+
 export async function editProductImage(prompt: string, images: File[]) {
   if (!apiKey) {
     throw new Error("未配置 IMAGE_API_KEY");
   }
+  const prepared = await Promise.all(images.map((image, index) => toEditFile(image, `ref-${index}.jpg`)));
   let lastError: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const started = Date.now();
     try {
-      return await requestEdit(prompt, images);
+      return await requestEdit(prompt, prepared);
     } catch (error) {
       lastError = error;
-      if (attempt === 2 || !isDropped(error)) break;
+      const elapsed = Date.now() - started;
+      if (attempt === 2 || !isDropped(error) || elapsed > 8_000) break;
+      console.log("[edit] retry after drop", `${elapsed}ms`);
     }
   }
   const text = lastError instanceof Error ? lastError.message : "生图失败";
@@ -39,19 +54,19 @@ async function requestEdit(prompt: string, images: File[]) {
   if (!/gpt-image/.test(imageModel)) {
     form.set("response_format", "b64_json");
   }
-  images.forEach((image, index) => {
-    const name = index === 0 ? "logo.png" : "garment.png";
-    form.append("image", image, name);
-  });
+  for (const image of images) {
+    form.append("image", image, image.name);
+  }
   const url = `${apiBaseUrl()}/images/edits`;
+  const started = Date.now();
   const response = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
     signal: AbortSignal.timeout(240_000),
-    verbose: true,
-  } as RequestInit);
+  });
   const payload = await response.json().catch(() => ({}));
+  console.log("[edit]", response.status, `${Date.now() - started}ms`);
   if (!response.ok) {
     const message = payload?.error?.message || payload?.message || payload?.msg || `生图失败 ${response.status}`;
     throw new Error(message);

@@ -186,10 +186,11 @@ export default function App() {
     const products = new Map<string, string>();
     const styles = new Map<string, { scene: string; outfit: string }>();
     const plans = new Map<string, { scene: string; outfit: string; shots: Shot[] }>();
+    const heroes = new Map<string, string>();
     setJobs(nextJobs);
     try {
       setPhase("product");
-      await runPool(nextJobs, 1, async (job) => {
+      await runPool(nextJobs, 2, async (job) => {
         setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { step: "product" }));
         const body = new FormData();
         body.set("logo", job.logo.file);
@@ -200,7 +201,7 @@ export default function App() {
       });
 
       setPhase("style");
-      await runPool(nextJobs, 1, async (job) => {
+      await runPool(nextJobs, 2, async (job) => {
         const key = `${job.logo.id}:${job.garment.id}`;
         const product = products.get(key);
         if (!product) throw new Error("缺少产品图");
@@ -219,7 +220,7 @@ export default function App() {
       });
 
       setPhase("plan");
-      await runPool(nextJobs, 1, async (job) => {
+      await runPool(nextJobs, 2, async (job) => {
         const key = `${job.logo.id}:${job.garment.id}`;
         const style = styles.get(key);
         if (!style?.scene || !style?.outfit) throw new Error("缺少穿搭规划");
@@ -229,28 +230,35 @@ export default function App() {
       });
 
       setPhase("generate");
-      await runPool(nextJobs, 1, async (job) => {
+      await runPool(nextJobs, 2, async (job) => {
         const key = `${job.logo.id}:${job.garment.id}`;
         const product = products.get(key);
         const plan = plans.get(key);
         if (!product || !plan) throw new Error("缺少产品图或规划");
-        const { scene: sceneText, outfit: outfitText, shots: planned } = plan;
         setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { step: "hero" }));
         const heroBody = new FormData();
         heroBody.set("model", model.file);
         heroBody.set("product", await dataUrlToFile(product, "product.png"));
-        heroBody.set("scene", sceneText);
-        heroBody.set("outfit", outfitText);
+        heroBody.set("scene", plan.scene);
+        heroBody.set("outfit", plan.outfit);
         const hero = await postImage("/api/hero", heroBody);
-        setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { hero, step: "sub" }));
+        heroes.set(key, hero);
+        setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { hero, step: "idle" }));
+      });
 
+      await runPool(nextJobs, 2, async (job) => {
+        const key = `${job.logo.id}:${job.garment.id}`;
+        const plan = plans.get(key);
+        const hero = heroes.get(key);
+        if (!plan || !hero) throw new Error("缺少主图或规划");
+        setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { step: "sub" }));
         const subs: Record<string, string> = {};
         const heroFile = await dataUrlToFile(hero, "hero.png");
-        for (const shot of planned) {
+        for (const shot of plan.shots) {
           const subBody = new FormData();
           subBody.set("hero", heroFile);
-          subBody.set("scene", sceneText);
-          subBody.set("outfit", outfitText);
+          subBody.set("scene", plan.scene);
+          subBody.set("outfit", plan.outfit);
           subBody.set("lens", shot.lens);
           subBody.set("action", shot.action);
           subBody.set("prop", shot.prop);

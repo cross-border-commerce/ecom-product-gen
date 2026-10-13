@@ -1,0 +1,11 @@
+services:
+  app:
+    image: ghcr.io/cross-border-commerce/ecom-product-gen:latest
+    build: .
+    ports:
+      - "3456:3456"
+    env_file:
+      - .env
+    environment:
+      PORT: 3456
+    restart: unless-stopped
