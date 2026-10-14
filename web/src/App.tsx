@@ -142,7 +142,7 @@ function patchJob(jobs: Job[], logoId: string, garmentId: string, patch: Partial
 export default function App() {
   const [logos, setLogos] = useState<LocalImage[]>([]);
   const [garments, setGarments] = useState<LocalImage[]>([]);
-  const [model, setModel] = useState<LocalImage | null>(null);
+  const [models, setModels] = useState<LocalImage[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [phase, setPhase] = useState<Phase>("idle");
   const [zipping, setZipping] = useState(false);
@@ -177,14 +177,18 @@ export default function App() {
     if (!files.length) return;
     setGarments((prev) => [...prev, ...toLocal(files)]);
   };
-  const addModel = async () => {
-    const files = await pickFiles(false);
+  const addModels = async () => {
+    const files = await pickFiles();
     if (!files.length) return;
-    setModel(toLocal(files)[0]);
+    setModels((prev) => [...prev, ...toLocal(files)]);
+  };
+
+  const appendModels = (body: FormData) => {
+    for (const item of models) body.append("model", item.file);
   };
 
   const start = async () => {
-    if (!pairs.length || !model || running) return;
+    if (!pairs.length || !models.length || running) return;
     const nextJobs: Job[] = pairs.map(({ logo, garment }) => ({ logo, garment, shots: [], subs: {}, step: "idle" }));
     const products = new Map<string, string>();
     const styles = new Map<string, { scene: string; outfit: string }>();
@@ -210,7 +214,7 @@ export default function App() {
         if (!product) throw new Error("缺少产品图");
         setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { step: "style" }));
         const styleBody = new FormData();
-        styleBody.set("model", model.file);
+        appendModels(styleBody);
         styleBody.set("product", await dataUrlToFile(product, "product.png"));
         const styleRes = await readJson(await fetch("/api/style", { method: "POST", body: styleBody }));
         if (!styleRes.scene || !styleRes.outfit) throw new Error("穿搭规划结果为空");
@@ -240,7 +244,7 @@ export default function App() {
         if (!product || !plan) throw new Error("缺少产品图或规划");
         setJobs((prev) => patchJob(prev, job.logo.id, job.garment.id, { step: "hero" }));
         const heroBody = new FormData();
-        heroBody.set("model", model.file);
+        appendModels(heroBody);
         heroBody.set("product", await dataUrlToFile(product, "product.png"));
         heroBody.set("scene", plan.scene);
         heroBody.set("outfit", plan.outfit);
@@ -327,7 +331,7 @@ export default function App() {
           <p className="text-xs tracking-[0.28em] text-[var(--mute)] uppercase">Ecom Product Studio</p>
           <h1 className="display mt-2 text-4xl font-medium tracking-tight">商品图工坊</h1>
           <p className="mt-3 max-w-2xl text-[var(--mute)]">
-            Logo + 服装 → 产品图 → 模特与商品图做穿搭规划 → 规划镜头动作表情 → 主图/副图
+            Logo + 服装 → 产品图 → 多张模特参考做穿搭规划 → 规划镜头动作表情 → 主图/副图
           </p>
         </div>
         <div className="flex gap-3">
@@ -340,7 +344,7 @@ export default function App() {
           </button>
           <button
             onClick={start}
-            disabled={!pairs.length || !model || running}
+            disabled={!pairs.length || !models.length || running}
             className="rounded-full bg-[var(--ink)] px-6 py-3 text-sm text-[var(--paper)] disabled:opacity-40"
           >
             {running ? "生成中…" : "开始生成"}
@@ -362,7 +366,7 @@ export default function App() {
       <div className="grid gap-5 md:grid-cols-3">
         <DropCard title="Logo / 印花" hint="每个都会套全部实拍" count={logos.length} onAdd={addLogos} items={logos} activeId={activeLogo?.id} onSelect={setActiveLogoId} onRemove={(id) => setLogos((prev) => prev.filter((item) => item.id !== id))} />
         <DropCard title="服装实拍" hint="与每个 Logo 组合" count={garments.length} onAdd={addGarments} items={garments} onRemove={(id) => setGarments((prev) => prev.filter((item) => item.id !== id))} />
-        <DropCard title="模特参考" hint="识场景和主图用" count={model ? 1 : 0} onAdd={addModel} items={model ? [model] : []} onRemove={() => setModel(null)} />
+        <DropCard title="模特参考" hint="同一人多角度，识脸和场景" count={models.length} onAdd={addModels} items={models} onRemove={(id) => setModels((prev) => prev.filter((item) => item.id !== id))} />
       </div>
 
       {activeLogo && garments.length ? (() => {

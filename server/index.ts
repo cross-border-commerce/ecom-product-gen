@@ -4,6 +4,7 @@ import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
 import { chatText, parseShots, parseStyle } from "./chat";
 import { imageModel } from "./config";
+import { asFile, asFiles } from "./form";
 import { editProductImage, hasApiKey } from "./generate";
 import { heroPrompt, PLAN_PROMPT, PRODUCT_PROMPT, STYLE_PROMPT, subPrompt } from "./prompts";
 
@@ -31,12 +32,12 @@ app.post("/api/product", async (c) => {
 
 app.post("/api/style", async (c) => {
   const body = await c.req.parseBody({ all: true });
-  const modelImage = asFile(body.model);
+  const modelImages = asFiles(body.model);
   const product = asFile(body.product);
-  if (!modelImage || !product) return c.json({ ok: false, error: "需要同时上传 model 和 product" }, 400);
+  if (!modelImages.length || !product) return c.json({ ok: false, error: "需要同时上传 model 和 product" }, 400);
   try {
-    console.log("[style] start");
-    const raw = await chatText(STYLE_PROMPT, [modelImage, product]);
+    console.log("[style] start", modelImages.length);
+    const raw = await chatText(STYLE_PROMPT, [...modelImages, product]);
     const parsed = parseStyle(raw);
     console.log("[style] done");
     return c.json({ ok: true, ...parsed });
@@ -65,13 +66,13 @@ app.post("/api/plan", async (c) => {
 
 app.post("/api/hero", async (c) => {
   const body = await c.req.parseBody({ all: true });
-  const modelImage = asFile(body.model);
+  const modelImages = asFiles(body.model);
   const product = asFile(body.product);
   const scene = String(body.scene || "").trim();
   const outfit = String(body.outfit || "").trim();
-  if (!modelImage || !product) return c.json({ ok: false, error: "需要同时上传 model 和 product" }, 400);
-  console.log("[hero] start");
-  return runEdit(c, heroPrompt(scene, outfit), [modelImage, product], "hero");
+  if (!modelImages.length || !product) return c.json({ ok: false, error: "需要同时上传 model 和 product" }, 400);
+  console.log("[hero] start", modelImages.length);
+  return runEdit(c, heroPrompt(scene, outfit), [...modelImages, product], "hero");
 });
 
 app.post("/api/sub", async (c) => {
@@ -101,12 +102,6 @@ async function runEdit(c: { json: (data: unknown, status?: number) => Response }
     console.log(`[${label}] fail`, error instanceof Error ? error.message : error);
     return c.json({ ok: false, error: error instanceof Error ? error.message : "生图失败" }, 500);
   }
-}
-
-function asFile(value: unknown): File | null {
-  if (value instanceof File) return value;
-  if (Array.isArray(value) && value[0] instanceof File) return value[0];
-  return null;
 }
 
 Bun.serve({
